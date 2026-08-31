@@ -1,0 +1,5 @@
+# Python 字节码缓存目录
+__pycache__/
+
+# 单个 .pyc 文件（以防万一有些旧项目结构不在 __pycache__ 中）
+*.pyc
