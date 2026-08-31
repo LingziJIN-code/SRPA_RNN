@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
  
 
 #%%Functions for packages
@@ -33,12 +34,15 @@ def import_packages_with_alias(package_dict):
         globals()[alias] = __import__(package)
         
         
+ 
+ 
+ 
 
+ 
 
  
 #%% Functions to calculate function values
- 
-
+  
 
 def CalculY(x_dataset, A, W, V, b, c, T, Nh, Ny):
     # This function is used to calculate y^hat by A, W, V, b, c recurrently nor auxi1liary variables h and u
@@ -66,14 +70,6 @@ def CalculY(x_dataset, A, W, V, b, c, T, Nh, Ny):
 
  
  
-
- 
-
- 
- 
-
- 
-
  
  
 
@@ -90,20 +86,13 @@ def ObjValue(x_dataset, y_dataset, A, W, V, b, c, lambda1, lambda2, lambda3, lam
 
 
 
-
- 
- 
- 
- 
- 
  
 
 def convert_and_reshape(array, new_shape):
     tensor = tf.convert_to_tensor(array, dtype=tf.float32)
     return tf.reshape(tensor, new_shape)
 
-
-
+ 
         
 
 #%% Install and import packages
@@ -118,10 +107,9 @@ package_dict = {
     'time': 'time',
     'random': 'random',
     'math': 'math',
-    'gc':'gc' 
+    'gc':'gc'
 }
 import_packages_with_alias(package_dict)
-# print('tf version:', tf.__version__)
 #%%Callback functions for keras
 class GetWeights(keras.callbacks.Callback):
     # Keras callback which collects values of weights and biases at each epoch
@@ -223,8 +211,7 @@ class TestErrors(keras.callbacks.Callback):
         W = self.model.layers[0].get_weights()[1].T
         b = self.model.layers[0].get_weights()[2].reshape(Nh, 1)
         A = self.model.layers[1].get_weights()[0].T
-        c = self.model.layers[1].get_weights()[1].reshape(Ny, 1)
-        # _, _, _, _, self.y_hat_test = CalculY(x_testset, A, W, V, b, c, T_test, Nh, Ny)
+        c = self.model.layers[1].get_weights()[1].reshape(Ny, 1) 
         _, _, _, _, self.y_hat_test = CalculY(np.concatenate((x_trainset, x_testset), axis=0), A, W, V, b, c, T+T_test, Nh, Ny)
         self.y_hat_test = self.y_hat_test[T:,]
         initial_test_err = (1/T_test) * np.sum((self.y_hat_test - y_testset) ** 2)
@@ -237,8 +224,7 @@ class TestErrors(keras.callbacks.Callback):
         b = self.model.layers[0].get_weights()[2].reshape(Nh, 1)
         A = self.model.layers[1].get_weights()[0].T
         c = self.model.layers[1].get_weights()[1].reshape(Ny, 1)
-        ##calculate y_hat
-        # _, _, _, _, self.y_hat_test = CalculY(x_testset, A, W, V, b, c, T_test, Nh, Ny)
+        ##calculate y_hat 
         _, _, _, _, self.y_hat_test = CalculY(np.concatenate((x_trainset, x_testset), axis=0), A, W, V, b, c, T+T_test, Nh, Ny)
         self.y_hat_test = self.y_hat_test[T:,]
         self.testerr.append((1/T_test)*np.sum((self.y_hat_test-y_testset)**2))  
@@ -278,49 +264,59 @@ class PrintEpochCallback(tf.keras.callbacks.Callback):
         if (epoch + 1) % 50 == 0:
             print(f"Epoch {epoch + 1} complete")
             
-#%%Import datasets
+#%%Load dataset
 np.random.seed(42)
 random.seed(42)
 
-## Set dimensions
-Nh = 4
-Nx = 5
-Ny = 3
-T_total = 10 #time length
+dataset_ori = pd.read_csv('./clean_SP500.csv', header = 0, index_col = 0)
 
+#%%Data Splitting
+##Split data into training error and test error
+dataset_length, data_dim = dataset_ori.shape
+sizerate_training = 0.9 #set the rate of spliting
+train_length = int(sizerate_training * dataset_length)
+
+#Set the dimension of y and h
+Ny = 1
+Nh = 20
+
+Nx = data_dim - Ny
+
+T = train_length
+T_test = dataset_length - T
+
+##Split features and variables
+x_dataset = dataset_ori[:train_length][dataset_ori.columns[:Nx]] 
+y_dataset = dataset_ori[:train_length][dataset_ori.columns[Nx:]]
+x_test = dataset_ori[train_length:][dataset_ori.columns[:Nx]] 
+y_test = dataset_ori[train_length:][dataset_ori.columns[Nx:]]
+
+##Transform Dataframe into Array
+x_trainset = np.array(x_dataset)
+y_trainset = np.array(y_dataset)
+
+x_testset = np.array(x_test)
+y_testset = np.array(y_test)
+
+
+
+# mean_i = 0 #set mean
+# stddev_i = 1e-1 #set deviation
+      
+lambda1 = 1 / (Nh * Ny)  # regularization parameters
+lambda2 = 1 / (Nh * Nh)
+lambda3 = 1 / (Nx * Nh)
+lambda4 = 1 / Nh
+lambda5 = 1 / Ny 
  
-SynData = np.loadtxt("SynDataset_Nh%g_Nx%g_Ny%g_T%d_new.txt"  %(Nh, Nx, Ny, T_total), delimiter = ",")
-x_dataset = SynData[:, 0:Nx]
-y_dataset = SynData[:, Nx:]
-
-#%%Split dataset 
-sizerate_training = 0.8
-train_length = int(sizerate_training * T_total)
-
-x_trainset = x_dataset[:train_length]
-x_testset = x_dataset[train_length:]
-
-y_trainset = y_dataset[:train_length]
-y_testset = y_dataset[train_length:]
-
-T = x_trainset.shape[0]
-T_test = y_testset.shape[0]
-
- 
-lambda1 = 1.2 / (Nh * Ny)  # regularization parameters
-lambda2 = 1.2 / (Nh * Nh)
-lambda3 = 1.2 / (Nx * Nh)
-lambda4 = 1.2 / Nh
-lambda5 = 1.2 / Ny 
-
 
 
 #%% Define RNN model
 timelength = T
 timelength_test = T_test
 
-opti_list = np.array(["GD", "GDC", "GDNes", "SGD", "Adam"])
-# opti_list = np.array(["GD"]) 
+opti_list = np.array(['GD', 'GDC', 'GDNes', 'SGD', 'Adam'])
+# opti_list = np.array(['Adam']) 
 # Initialize the learning rate variable
 lr = None
 
@@ -346,50 +342,51 @@ y_input = np.transpose(y_input, (1, 0, 2))
 y_test_input = np.transpose(y_test_input, (1, 0, 2))  
 
 
+
 #%% Define hyperparameters for RNNs 
-epoch = 100
+epoch = 1000
 # Begin loops
 for opt in opti_list:
-    mean_i = [0] 
+    # mean_i = [0] 
     Errors_GDs_SGDs = pd.DataFrame(columns=['TrainErr' + str(opt), 'TestErr' + str(opt), 'Time' + str(opt)])
     print("====================")
     print(f"Optimize method: {str(opt)}")
     print("====================")
     if opt == 'GD':
         init_method = 'Gaussian'
-        stddev_i = 0.1
+        stddev_i = 0.01  
         batchsize = timelength
         cp_norm = None
-        lr = 0.0001
+        lr = 0.1  
         nes = False
-        ini_mach_1 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+1) 
-        ini_mach_2 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+2)
-        ini_mach_3 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+3)
+        ini_mach_1 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+1)
+        ini_mach_2 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+2)
+        ini_mach_3 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+3)
         optimizer = tf.keras.optimizers.SGD(learning_rate = lr, clipnorm = cp_norm, nesterov = nes)
         
     if opt == 'GDC':
-        init_method = 'Gaussian'
-        stddev_i = 0.1
+        init_method = 'Gaussian'    
+        stddev_i = 0.01    
         batchsize = timelength
-        cp_norm = 0.5
-        lr = 0.0001
-        nes = False
-        ini_mach_1 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+1) 
-        ini_mach_2 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+2)
-        ini_mach_3 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+3)
+        cp_norm = 0.5   
+        lr = 0.1
+        nes = False 
+        ini_mach_1 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+1)
+        ini_mach_2 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+2)
+        ini_mach_3 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+3)
         optimizer = tf.keras.optimizers.SGD(learning_rate = lr, clipnorm = cp_norm, nesterov = nes)
 
 
     if opt == 'GDNes':
-        init_method = 'Glorot'
-        stddev_i = 20
+        init_method = 'Gaussian'
+        stddev_i = 0.1
         batchsize = timelength
         cp_norm = None
-        lr = 0.1
+        lr = 0.1   
         nes = True
-        ini_mach_1 = tf.keras.initializers.GlorotNormal(seed=1234+1) 
-        ini_mach_2 = tf.keras.initializers.GlorotNormal(seed=1234+2)
-        ini_mach_3 = tf.keras.initializers.GlorotNormal(seed=1234+3)        
+        ini_mach_1 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+1)
+        ini_mach_2 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+2)
+        ini_mach_3 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+3)     
         # optimizer = tf.keras.optimizers.SGD(learning_rate = lr, clipnorm = cp_norm, nesterov = nes)
         optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9, clipnorm=cp_norm, nesterov=True)
 
@@ -397,24 +394,24 @@ for opt in opti_list:
 
     if opt == 'SGD':
         init_method = 'Gaussian'
-        stddev_i = 0.1
-        batchsize = 4
-        lr = 0.0001
-        ini_mach_1 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+1) 
-        ini_mach_2 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+2)
-        ini_mach_3 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+3)
+        stddev_i = 1e-3  
+        batchsize = 25   
+        lr = 0.01
+        ini_mach_1 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+1)
+        ini_mach_2 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+2)
+        ini_mach_3 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+3)
         optimizer = tf.keras.optimizers.SGD(learning_rate = lr)
 
 
 
     if opt == 'Adam':
         init_method = 'Gaussian'
-        stddev_i = 0.01  
-        batchsize = 1
-        lr = 0.1
-        ini_mach_1 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+1) 
-        ini_mach_2 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+2)
-        ini_mach_3 = tf.keras.initializers.RandomNormal(mean=0, stddev=stddev_i, seed=1234+3)
+        stddev_i = 1e-3  
+        batchsize = 25   
+        lr = 1e-4   
+        ini_mach_1 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+1)
+        ini_mach_2 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+2)
+        ini_mach_3 = tf.keras.initializers.RandomNormal(mean = 0, stddev = stddev_i, seed = 1234+2)
         optimizer = tf.keras.optimizers.Adam(learning_rate = lr)
 
     
@@ -453,17 +450,10 @@ for opt in opti_list:
             validation_data=(x_test_input, y_test_input), verbose=0, shuffle=False,
             callbacks=[timec, tae, tee, PrintEpochCallback()])
         
-    elif opt in np.array(['SGD']):
+    elif opt in np.array(['SGD','Adam']):
         np.random.seed(42)
         random.seed(42)
-        train_gen = CustomDataGenerator(x_trainset, y_trainset, batchsize=4, timelength=timelength)                
-        history = model.fit(
-            train_gen, epochs=epoch, verbose=0,
-            callbacks=[timec, tae, tee, PrintEpochCallback()])
-    elif opt in np.array(['Adam']):
-        np.random.seed(42)
-        random.seed(42)
-        train_gen = CustomDataGenerator(x_trainset, y_trainset, batchsize=1, timelength=timelength)                
+        train_gen = CustomDataGenerator(x_trainset, y_trainset, batchsize=25, timelength=timelength)                
         history = model.fit(
             train_gen, epochs=epoch, verbose=0,
             callbacks=[timec, tae, tee, PrintEpochCallback()])
@@ -473,7 +463,7 @@ for opt in opti_list:
     Errors_GDs_SGDs['TestErr' + str(opt)] = tee.testerr
     Errors_GDs_SGDs['Time' + str(opt)] = np.insert(timec.times, 0, 0)
 
-    pd.DataFrame(Errors_GDs_SGDs).to_csv('synT10_Errors_' + str(opt) +'.csv', index_label = "iterations")
+    pd.DataFrame(Errors_GDs_SGDs).to_csv('sp500_Errors_' + str(opt) +'.csv', index_label = "iterations")
 
     del model
     del rnn_cell

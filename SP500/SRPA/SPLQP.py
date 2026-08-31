@@ -1,0 +1,581 @@
+# Import and install dependency packages
+from dependency_packages import np, pd, scipy, copy, time, random, math, gc, cp 
+
+
+# Import mypackages
+import mypackages.tool_functions as toolfunc
+import mypackages.initial_functions as inifunc
+import mypackages.functions_calculate_ALfunc as ALfunc 
+
+
+def load_dataset(dataset_name):
+    dataset_ori = pd.read_csv(dataset_name + '.csv', header=0, index_col=0) #header=0, index_col=0会把csv第0行作为列名，第0列作为行索引，不会当成内容，也就是自动删掉了第0行和第0列
+    # dataset_ori = pd.read_csv(dataset_name + '.csv', header=None, index_col=None) #数据集本身没有行索引和列索引的时候用这个
+    return dataset_ori
+
+
+def split_dataset(dataset_ori, Ny, sizerate_training=0.9):
+    dataset_length, data_dim = dataset_ori.shape
+    Nx = data_dim - Ny
+    train_length = int(sizerate_training * dataset_length)
+    T = train_length
+    T_test = dataset_length - T
+
+    x_trainset = dataset_ori.iloc[:train_length, :Nx].to_numpy() 
+    y_trainset = dataset_ori.iloc[:train_length, Nx:].to_numpy()  
+
+    x_testset = dataset_ori.iloc[train_length:, :Nx].to_numpy()  
+    y_testset = dataset_ori.iloc[train_length:, Nx:].to_numpy()
+
+    return x_trainset, y_trainset, x_testset, y_testset, T, T_test, Nx
+
+
+def initialize_SPLQP_params(Nh,
+                          Ny,
+                          Nx,
+                          T,
+                          beta1,
+                          beta2,
+                          lambda1,
+                          eta1=0.99,
+                          eta2=1.2,
+                          rho1=None):
+    """
+    Initialize parameters for the SPLQP algorithm.
+
+    Parameters:
+    - Nh: Number of hidden units
+    - Ny: Number of output units
+    - Nx: Number of input units
+    - T: Size of the training set
+    - beta1: penalty parameter for hidden layer (default: 1)
+    - beta2: penalty parameter for output layer (default: 1)
+    - lambda1: Regularization parameter
+    - eta1: in (0,1), parameter for measuring the sufficient descent (default: 0.99)
+    - eta2: >1, update parameter for rho (default: 1.2)
+    - rho1: initial value for rho, the regularization parameter
+
+    Returns:
+    - A dictionary containing the initialized parameters.
+    """
+
+    # Calculate default values if not provided,默认按251120版的line68设置
+    if rho1 is None:
+        # rho1 = ( max(2*lambda1,1/T) + pow(T*(Nh+Ny),0.5) * pow( max(beta1*beta1*Nh+beta2*beta2*Ny, T ),0.5) ) / (1-eta1) 
+        rho1=0.24 
+        print("rho_1", rho1)  
+     
+ 
+
+    return {
+        "eta1": eta1,
+        "eta2": eta2,
+        "rho1":rho1
+    }   #注意，返回的是个字典
+
+
+def initialize_variables(Ny,
+                         Nh,
+                         Nx,
+                         T,
+                         T_test,
+                         distribution_type="Gaussian",
+                         mean=None,
+                         std=None,
+                         x_trainset=None,
+                         y_trainset=None,
+                         x_testset=None,
+                         y_testset=None,
+                         beta1=None,
+                         beta2=None,
+                         lambda1=None,
+                         lambda2=None,
+                         lambda3=None,
+                         lambda4=None,
+                         lambda5=None):
+    """
+    Initialize variables for the SPLQP algorithm.
+
+    Parameters:
+    - Ny: Number of output units
+    - Nh: Number of hidden units
+    - Nx: Number of input units
+    - T: Size of the training set
+    - distribution_type: Type of distribution for initialization ("Gaussian" or other, default: "Gaussian")
+    - mean: Mean for the distribution (default: 0 for Gaussian, 0 for other)
+    - std: Standard deviation for the distribution (default: 1e-3 for Gaussian, 20 for other)
+    - x_trainset: Training set inputs
+    - y_trainset: Training set outputs 
+    - x_testset: Test set inputs
+    - y_testset: Test set outputs 
+    - beta1: penalty parameter for hidden layer (default: 1)
+    - beta2: penalty parameter for output layer (default: 1)
+    - lambda1/2/3/4/5: Regularization parameters
+
+    Returns:
+    - A dictionary containing initialized variables.
+    """
+
+    # Set defaults based on distribution type
+    if distribution_type == "Gaussian":
+        if mean is None:
+            mean = 0
+        if std is None:
+            std = 1e-3
+    else:
+        if mean is None:
+            mean = 0
+        if std is None:
+            std = 20
+    
+
+    # Initialize variables using the specified distribution
+    # 随机生成A0, W0, V0, b0, c0后, feedforward来生成h0,u0,v0, 所以生成的z0是可行点
+    # y_hat0是feedforward得到的vt0^T,于y_trainset同维度 
+    # hthetaout0就是v=hz约束的右端值的T*Ny矩阵，由于此时v0是feedfoward得到的，所以其实是=vt0^T=y_hat0
+    A0, W0, V0, b0, c0, thetain_0, thetaout_0 = inifunc.iniVariable(
+        Ny, Nh, Nx, T, mean, std, distribution_type)
+    u0, ut0, h0, ht0, v0, vt0, y_hat0 = ALfunc.Calculauxi(x_trainset, A0, W0, V0, 
+                                                          b0, c0, T, Nh, Nx, Ny) 
+    hthetaout0 = ALfunc.CalculY_auxi(thetaout_0, ht0, Nh, Ny, T)  
+
+    # Ensure all necessary parameters are provided
+    if None in (lambda1, lambda2, lambda3, lambda4, lambda5):
+        raise ValueError("The lambda parameter must be provided.")
+
+    regvalue0 = ALfunc.ValueRegula(A0, W0, V0, b0, c0, u0, 
+                                   lambda1=lambda1, 
+                                   lambda2=lambda2,
+                                   lambda3=lambda3, 
+                                   lambda4=lambda4, 
+                                   lambda5=lambda5, 
+                                   lambda6=0)
+    # print("regvalue0", regvalue0)
+    lossTheta0 = ALfunc.ValueLoss1(y_trainset, v0, Ny, T) + regvalue0 + ALfunc.Valuel1term(x_trainset, ht0, h0, u0, v0, thetain_0, thetaout_0, beta1, beta2, Nx, Nh, Ny,
+            T)
+
+    #Trainerror
+    TrainErr0 = (1 / T) * np.sum((y_hat0 - y_trainset)**2)
+    if np.isnan(TrainErr0) == True:
+        TrainErr0 = 1e+30
+    
+    #Testerror 
+    _, _, _, _, y_test_hat0 = ALfunc.CalculY(np.concatenate((x_trainset, x_testset), axis=0), A0, W0, V0, b0, c0,
+                                             T+T_test, Nh, Nx, Ny)
+    y_test_hat0 = y_test_hat0[T:,]
+    TestErr0 = (1 / T_test) * np.sum((y_test_hat0 - y_testset)**2)
+
+
+    # FeasVi_h0 = (1 / T) * np.sum(np.abs(h0 - toolfunc.ReLU(u0))) 
+    # FeasVi_u0 = (1 / T) * np.sum(
+    #     np.abs(u0 - ALfunc.PsiX(ht0, x_trainset, thetain_0, Nx, Nh, T)))
+    # FeasVi_v0 = (1 / T) * np.sum(np.abs(v0- hthetaout0.ravel().reshape(-1,1)))
+    FeasVi_h0 = (1 / T) * np.sum((h0 - toolfunc.ReLU(u0))**2)**(1/2) 
+    FeasVi_u0 = (1 / T) * np.sum(
+        (u0 - ALfunc.PsiX(ht0, x_trainset, thetain_0, Nx, Nh, T))**2)**(1/2)
+    FeasVi_v0 = (1 / T) * np.sum((v0- hthetaout0.ravel().reshape(-1,1))**2)**(1/2)
+
+    return {
+        "A0": A0,
+        "W0": W0,
+        "V0": V0,
+        "b0": b0,
+        "c0": c0,
+        "thetain_0": thetain_0,
+        "thetaout_0": thetaout_0,
+        "u0": u0,
+        "ut0": ut0,
+        "h0": h0,
+        "ht0": ht0,
+        "v0":v0, 
+        "vt0":vt0,
+        "y_hat0": y_hat0,
+        "hthetaout0": hthetaout0, 
+        "lossTheta0": lossTheta0,
+        "feasvi_h0": FeasVi_h0,
+        "feasvi_u0": FeasVi_u0,
+        "feasvi_v0": FeasVi_v0,
+        "TrainErr0": TrainErr0,
+        "TestErr0": TestErr0
+    }   #注意，返回的是个字典
+
+
+def SPLQP_ReLU_optimization(dataset_name,
+                              Ny=1,
+                              Nh=20,
+                              maxiter=10, 
+                              distribution_type="Gaussian",
+                              mean=None,
+                              std=None,
+                              beta1=1,
+                              beta2=1,
+                              lambda1=None,
+                              lambda2=None,
+                              lambda3=None,
+                              lambda4=None,
+                              lambda5=None,
+                              eta1=0.99,
+                              eta2=5 / 6, 
+                              rho1=0.24, 
+                              print_option=2):
+    """
+    Perform SPLQP to train RNNs.
+
+    Parameters:
+    - dataset_name: Name of the dataset to load
+    - Ny: Number of output units (default: 1)
+    - Nh: Number of hidden units (default: 20)
+    - maxiter: Maximum number of iterations for the outer loop (default: 10) 
+    - distribution_type: Type of distribution for variable initialization ("Gaussian" "He", "Glorot", "LeCun", default: "Gaussian")
+    - mean: Mean for the initialization distribution (default: 0 for Gaussian, 0 for other)
+    - std: Standard deviation for the initialization distribution (default: 1e-3 for Gaussian, 20 for other)
+    - beta1: penalty parameter for hidden layer (default: 1)
+    - beta2: penalty parameter for output layer (default: 1)
+    - lambda1/2/3/4/5: Regularization parameters
+    - eta1, eta2: Parameters for updating the algorithm 
+    - print: Control the verbosity of the output (default: 0)
+        - 0: No output
+        - 1: Print final TrainErr, TestErr, FeasVi_h, FeasVi_u, FeasVi_v
+        - 2: Print TrainErr, TestErr, FeasVi_h, FeasVi_u, FeasVi_v, Theta_value and time for each outer iteration
+
+    Returns:
+    - results: A dictionary containing lists for TrainErr, TestErr, time, FeasVi_h, and FeasVi_u
+    """
+    
+
+    # Print the optimization problem being solved
+    if print_option >= 1:
+        print(
+            "\nWe use a sequential piecewise linear-quadratic programming method to solve the following RNN training problem with ReLU:"
+        )
+        print("minimize Theta(z):=F(z) + p(z)")
+        print("where p(z) is the l1-penalty terms with (beta1,beta2) for")
+        print("u - Psi(h,theta_in) = 0")
+        print("h - ReLU(u) = 0")
+        print("v - PhiX(h,theta_out) = 0\n")
+
+    # Load and split the dataset
+    dataset_ori = load_dataset(dataset_name)
+    # # 测试分割前是否正确
+    # print(
+    #         f"{dataset_ori}\n"
+    #     )
+    # x_trainset, y_trainset, x_testset, y_testset, T, T_test, Nx = split_dataset(
+    #     dataset_ori, Ny)
+    x_trainset, y_trainset, x_testset, y_testset, T, T_test, Nx = split_dataset(
+        dataset_ori, Ny, 0.9)   #T小时分割比为0.8，T大时为0.9
+    # # 测试是否分割正确
+    # print(
+    #         f"{x_trainset}\n{y_trainset}\n{x_testset}\n{y_testset}\n"
+    #     )
+    Ntheta = Nh * (Ny+Nh+Nx+1) + Ny
+
+    #计算一下罚参阈值
+    gammay = np.sum(y_trainset**2) / T
+    gamma1 = ( (gammay/lambda2)**(T/2) -1 ) / ( (gammay/lambda2)**(1/2) -1)
+    print('gammay=', gammay)
+    print("beta1>", 2*gamma1*gammay/((lambda1*T)**0.5), " beta2>", 2*(gammay/T)**0.5)
+
+
+    # Initialize variables
+    variables = initialize_variables(Ny,
+                                     Nh,
+                                     Nx,
+                                     T,
+                                     T_test,
+                                     distribution_type=distribution_type,
+                                     mean=mean,
+                                     std=std,
+                                     x_trainset=x_trainset,
+                                     y_trainset=y_trainset,
+                                     x_testset=x_testset,
+                                     y_testset=y_testset,
+                                     beta1=beta1,
+                                     beta2=beta2,
+                                     lambda1=lambda1,
+                                     lambda2=lambda2,
+                                     lambda3=lambda3,
+                                     lambda4=lambda4,
+                                     lambda5=lambda5)
+
+    # Initialize lists to store results
+    FeasVi_h, FeasVi_u, FeasVi_v = [variables["feasvi_h0"]], [variables["feasvi_u0"]], [variables["feasvi_v0"]]
+    TrainErr, TestErr = [variables["TrainErr0"]], [variables["TestErr0"]] 
+    rho_k = rho1
+    funcval_k = [variables["lossTheta0"].item()]
+    res_value=[]
+    res_norm=[]
+    time_SPLQPRNN = [0]
+    if print_option == 2:
+        print(f"\n{'Iteration':<10}{'TrainErr':<15}{'TestErr':<15}{'FeasVi_h':<15}{'FeasVi_u':<15}{'FeasVi_v':<15}{'Theta_v':<15}{'Time (s)':<10}")
+        print("-" * 70)
+        print(
+            f"{0:<10}{TrainErr[-1]:<15.4f}{TestErr[-1]:<15.4f}{FeasVi_h[-1]:<15.4f}{FeasVi_u[-1]:<15.4f}{FeasVi_v[-1]:<15.4f}{funcval_k[-1]:<15.4f}{time_SPLQPRNN[-1]:<10.4f}"
+        )
+                    
+    # Initialize variables for both the problem
+    A_k, W_k, V_k, b_k, c_k = variables["A0"], variables[
+                "W0"], variables["V0"], variables["b0"], variables["c0"]
+    thetain_k, thetaout_k, h_k, u_k, v_k, ht_k, ut_k, vt_k = variables[
+                "thetain_0"], variables["thetaout_0"], variables["h0"], variables[
+                    "u0"], variables["v0"], variables["ht0"], variables["ut0"], variables["vt0"]
+    
+    
+    y_trainset_flat = y_trainset.ravel().reshape((-1,1))
+
+    # Begin outer loop
+    for k in range(maxiter):
+        start_k = time.perf_counter()
+        # --- 准备工作 ---
+        # 预计算常数项，减少 CVXPY 在求解过程中的计算量
+        # sgn_u_k 用于处理 [u]_+ 约束
+        sgn_u_k = np.sign( u_k + np.random.uniform(-1e-15, 1e-15, size=(T*Nh, 1)) )
+        possgn_u_k = np.maximum(sgn_u_k, 0)
+        # sgn_sparse = sparse.diags(sgn_u_k.ravel())
+
+        # 定义变量
+        s = cp.Variable(Ntheta + T*(2*Nh + Ny))
+        
+        # 变量切片与重构 (保持与原代码逻辑一致)
+        SA = cp.reshape(s[:Ny*Nh], (Ny, Nh), order='F')
+        SW = cp.reshape(s[Ny*Nh : Nh*(Ny+Nh)], (Nh, Nh), order='F')
+        SV = cp.reshape(s[Nh*(Ny+Nh) : Nh*(Ny+Nh+Nx)], (Nh, Nx), order='F')
+        sb = cp.reshape(s[Nh*(Ny+Nh+Nx) : Ntheta-Ny], (-1,1), order='F')
+        sc = cp.reshape(s[Ntheta-Ny : Ntheta], (-1,1), order='F')
+        sh = cp.reshape(s[Ntheta : Ntheta+T*Nh], (-1,1), order='F')
+        su = cp.reshape(s[Ntheta+T*Nh : Ntheta+2*T*Nh], (-1,1), order='F')
+        sv = cp.reshape(s[Ntheta+2*T*Nh : ], (-1,1), order='F')
+
+        # --- 目标函数构建 ---
+
+        # term1: 损失函数线性项 (v_k - y_train)
+        term1 = cp.matmul((2 * (v_k - y_trainset.ravel().reshape(-1, 1)) / T).T, sv)
+
+        # term2: 参数正则化项 (L2-like/Frobenius)
+        term2 = (2 * lambda1 * cp.sum(cp.multiply(SA, A_k)) + 
+                 2 * lambda2 * cp.sum(cp.multiply(SW, W_k)) + 
+                 2 * lambda3 * cp.sum(cp.multiply(SV, V_k)) + 
+                 2 * lambda4 * cp.sum(cp.multiply(sb, b_k)) + 
+                 2 * lambda5 * cp.sum(cp.multiply(sc, c_k)))
+
+        # term3: 二次正则项
+        term3 = 0.5 * rho_k * cp.sum_squares(s)
+
+        # term4: h - [u]_+ 惩罚项
+        # 这里利用了 linearized 的思想：|h + dh - [u + du]_+|
+        term4 = beta1 * cp.norm1(h_k + sh - cp.multiply(u_k + su, possgn_u_k))
+
+        # term5: u - PhiX(h, theta_in) 惩罚项 (向量化实现)      
+        # 处理时序滞后项: (W_k + SW) @ h_{t-1} + W_k @ sh_{t-1}
+        # 构建滞后矩阵：将 h 和 sh 的前 T-1 个元素补零放在末尾，或将后 T-1 个元素放在开头
+        # 对应原代码逻辑：h_{t-1} 在 t=0 时为 0
+        h_prev = cp.vstack([np.zeros((Nh, 1)), h_k[:-Nh]]).reshape((Nh, T), order='F')
+        sh_prev = cp.vstack([np.zeros((Nh, 1)), sh[:-Nh]]).reshape((Nh, T), order='F')
+        
+        # 这里的 W_k 作用在 h_prev 上，SW 作用在 h_prev 上，W_k 作用在 sh_prev 上
+        # 根据原循环逻辑：u_t - W_k@h_{t-1} - V_k@x_t - b_k + su_t - W_k@sh_{t-1} - SW@h_{t-1} - SV@x_t - sb
+        # 整理为: (u_k + su) - (Vk_SV_X + sb) - (W_k + SW)@h_prev - W_k@sh_prev
+        # 注意：sb 在 Vk_SV_X 里已经加过了，这里要小心重复
+        
+        # 重新整理 term5 核心：
+        # 构造矩阵 (Nh, T)
+        # 滞后项部分
+        W_part = (W_k + SW) @ h_prev + W_k @ sh_prev
+        # 线性/常数项部分
+        # x_trainset 形状为 (T, Nx) -> 转置为 (Nx, T)
+        X_part = (V_k + SV) @ x_trainset.T + b_k + sb  # 广播 b_k + sb 到每一列
+        
+        uh = (u_k + su).reshape((Nh, T), order='F') - X_part - W_part 
+        term5 = beta1 * cp.norm1(uh)
+
+        # term6: v - PhiX(h, theta_out) 惩罚项
+        # 原逻辑：vh_t = v_t - A_k@h_t - c_k + sv_t - A_k@sh_t - SA@h_t - sc
+        # 整理为: (v_k + sv) - (A_k + SA)@h_t - A_k@sh_t - (c_k + sc)
+        
+        h_curr = h_k.reshape((Nh, T), order='F')
+        sh_curr = sh.reshape((Nh, T), order='F')
+        
+        vh = (v_k + sv).reshape((Ny, T), order='F') - \
+             ((A_k + SA) @ h_curr + A_k @ sh_curr)  - \
+             (c_k + sc) # 这里的 c_k+sc 会自动广播到 (Ny, T)
+             
+        term6 = beta2 * cp.norm1(vh)
+
+        # --- 求解 ---
+        objective = cp.Minimize(term1 + term2 + term3 + term4 + term5 + term6)
+        constraints = [cp.multiply(u_k + su,sgn_u_k) >= 0]
+        # constraints = [sgn_sparse @ (u_k + su) >= 0]
+        
+        prob = cp.Problem(objective, constraints) 
+        prob.solve(solver=cp.OSQP, verbose=False)   #只用OSQP
+        
+        
+        # --- 结果提取 ---
+        # if prob.status in ["optimal", "feasible"]:
+        #     d = s.value.reshape(-1, 1)
+        #     print(f"CVXPY status: {prob.status}, Optimal value: {prob.value}")
+        # else:
+        #     print(f"CVXPY status: {prob.status}")
+        #     d = np.zeros_like(s.value).reshape(-1, 1)
+        d = s.value.reshape(-1,1)
+        print("CVXPY status:", prob.status)
+        print("Optimal value:", prob.value)
+
+
+        # 记录res_norm
+        res_norm.append( np.sqrt(np.sum(d**2)) )
+        # 记录res_value
+        res_value_temp = prob.value + (1/T)*np.sum((v_k-y_trainset_flat)**2) + lambda1 * np.sum(A_k** 2) + lambda2 * np.sum(W_k** 2) + lambda3 * np.sum(V_k** 2) + lambda4 * np.sum(b_k** 2) + lambda5 * np.sum(c_k** 2)
+        res_value.append( funcval_k[-1] - res_value_temp )
+
+
+
+
+
+        # if result.fun == objective_function(initial_guess):
+        #     end_k = time.perf_counter()
+        #     time_SPLQPRNN.append(end_k - start_k)
+        #     print(
+        #     f"\nThe sequential piecewise linear-quadratic programming method teminates at {k+1}th iteration without update.\n")
+        #     break
+
+        # # update z_k
+        # 现在d是列向量
+        # value of Theta(z_k+d_k)
+        dthetaout = np.concatenate( (d[:Ny*Nh], d[Ntheta-Ny:Ntheta]), axis=0 )
+        dthetain = d[Ny*Nh : Ntheta-Ny]
+        DA = d[:Ny*Nh].reshape((Ny,Nh), order="F")
+        DW = d[Ny*Nh : Nh*(Ny+Nh)].reshape((Nh,Nh), order="F")
+        DV = d[Nh*(Ny+Nh) : Nh*(Ny+Nh+Nx)].reshape((Nh,Nx), order="F")
+        db = d[Nh*(Ny+Nh+Nx) : Ntheta-Ny]
+        dc = d[Ntheta-Ny : Ntheta]
+        dh = d[Ntheta : Ntheta+T*Nh]
+        dht = dh.reshape((Nh,T), order="F")
+        du = d[Ntheta+T*Nh : Ntheta+2*T*Nh]
+        dv = d[Ntheta+2*T*Nh : ] 
+        regvalue_trial = lambda1 * np.sum((A_k+DA) ** 2) + lambda2 * np.sum((W_k+DW) ** 2) + lambda3 * np.sum((V_k+DV) ** 2) + lambda4 * np.sum((b_k+db) ** 2) + lambda5 * np.sum((c_k+dc) ** 2)
+        lossTheta_trial = ALfunc.ValueLoss1(y_trainset, v_k+dv, Ny, T) + regvalue_trial + ALfunc.Valuel1term(x_trainset, ht_k+dht, h_k+dh, u_k+du, v_k+dv, thetain_k+dthetain, thetaout_k+dthetaout, beta1, beta2, Nx, Nh, Ny, T)
+        # Determine the amount of decrease
+        if funcval_k[-1]-lossTheta_trial >= 0.5 * eta1 * rho_k * np.dot(d.T,d):
+            flag = 1 # successful
+            # A_k, W_k, V_k, b_k, c_k += DA, DW, DV, db, dc
+            A_k += DA
+            W_k += DW
+            V_k += DV
+            b_k += db
+            c_k += dc
+            thetain_k += dthetain
+            thetaout_k += dthetaout
+            h_k += dh
+            ht_k += dht
+            u_k += du
+            v_k += dv 
+        else:
+            flag = 0   # unsuccessful
+            rho_k *= eta2
+        
+        # Record time
+        end_k = time.perf_counter()
+        time_SPLQPRNN.append(end_k - start_k)
+
+        print(f"flag_{k+1}: ", flag )
+        # print(funcval_k[-1]-lossTheta_trial, 0.5 * eta1 * rho_k * np.dot(d.T,d))
+        if flag ==1:
+            # Record value of Theta(z_k)
+            funcval_k.append(lossTheta_trial.item())
+
+            # Record TrainErr
+            _, _, _, _, _, _, y_hat_k = ALfunc.Calculauxi(x_trainset, A_k,
+                                                    W_k, V_k, b_k,
+                                                    c_k, T, Nh, Nx, Ny)
+            TrainErr.append((1 / T) * np.sum((y_hat_k - y_trainset)**2))
+            
+            # Record TestErr 
+            _, _, _, _, _, _, y_test_hat = ALfunc.Calculauxi(
+                np.concatenate((x_trainset, x_testset), axis=0), A_k, W_k, V_k, b_k, c_k,
+                T+T_test, Nh, Nx, Ny) 
+            y_test_hat = y_test_hat[T:,]
+            TestErr.append((1 / T_test) * np.sum((y_test_hat - y_testset)**2))
+
+            # # Record violation in l1-norm
+            # FeasVi_h.append( (1 / T) * np.sum(np.abs(h_k - toolfunc.ReLU(u_k))) ) 
+            # FeasVi_u.append( (1 / T) * np.sum(np.abs(u_k - ALfunc.PsiX(ht_k, x_trainset, thetain_k, Nx, Nh, T))) )
+            # hthetaout_k = ALfunc.CalculY_auxi(thetaout_k, ht_k, Nh, Ny, T)
+            # FeasVi_v.append( (1 / T) * np.sum(np.abs(v_k- hthetaout_k.ravel().reshape(-1,1))) ) 
+            # Record violation in l2-norm
+            FeasVi_h.append( (1 / T) * np.sum( (h_k - toolfunc.ReLU(u_k))**2 )**(1/2) ) 
+            FeasVi_u.append( (1 / T) * np.sum( (u_k - ALfunc.PsiX(ht_k, x_trainset, thetain_k, Nx, Nh, T))**2 )**(1/2) )
+            hthetaout_k = ALfunc.CalculY_auxi(thetaout_k, ht_k, Nh, Ny, T)
+            FeasVi_v.append( (1 / T) * np.sum( (v_k- hthetaout_k.ravel().reshape(-1,1))**2 )**(1/2) )
+        else:
+            funcval_k.append(funcval_k[-1])
+            TrainErr.append(TrainErr[-1])
+            TestErr.append(TestErr[-1])
+            FeasVi_h.append(FeasVi_h[-1])
+            FeasVi_u.append(FeasVi_u[-1])
+            FeasVi_v.append(FeasVi_v[-1])
+
+        if print_option == 2:
+            print(
+                f"{k+1:<10}{TrainErr[-1]:<15.4f}{TestErr[-1]:<15.4f}{FeasVi_h[-1]:<15.4f}{FeasVi_u[-1]:<15.4f}{FeasVi_v[-1]:<15.4f}{funcval_k[-1]:<15.4f}{time_SPLQPRNN[-1]:<10.4f}"
+            ) 
+
+        
+
+    # Prepare results to return
+    res_value.append(float('nan'))
+    res_norm.append(float('nan'))
+    results = {
+        "TrainErr": TrainErr,
+        "TestErr": TestErr,
+        "time": time_SPLQPRNN,
+        "FeasVi_h": FeasVi_h,
+        "FeasVi_u": FeasVi_u,
+        "FeasVi_v": FeasVi_v,
+        "Theta_v": funcval_k,
+        "res_value": res_value,
+        "res_norm": res_norm
+    }
+
+    if print_option == 1:
+        print(f"\nFinal Results:\n{'-' * 40}")
+        print(f"TrainErr   : {TrainErr[-1]:.4f}")
+        print(f"TestErr    : {TestErr[-1]:.4f}")
+        print(f"FeasVi_h   : {FeasVi_h[-1]:.4f}")
+        print(f"FeasVi_u   : {FeasVi_u[-1]:.4f}")
+        print(f"FeasVi_v   : {FeasVi_v[-1]:.4f}")
+        print(f"{'-' * 40}\n")
+
+    """
+    将多个数组保存为CSV文件，第一列为iterations
+    
+    参数:
+    funcval_k, TrainErr, ... : 同长度的数组
+    filename : 输出文件名 
+    """
+    filename= 'sp500_Errors_SPLQP.csv'
+    # 检查所有数组长度是否一致
+    lengths = [len(arr) for arr in [funcval_k, TrainErr, TestErr, FeasVi_h, FeasVi_u, FeasVi_v, time_SPLQPRNN]]
+    if len(set(lengths)) != 1:
+        raise ValueError(f"数组长度不一致! 长度: {lengths}")
+    
+    n = lengths[0]
+    iterations = np.arange(n)
+    
+    df = pd.DataFrame({
+        'iterations': iterations,
+        'funcval_kSPLQP': funcval_k,
+        'TrainErrSPLQP': TrainErr,
+        'TestErrSPLQP': TestErr,
+        'FeasVi_hSPLQP': FeasVi_h,
+        'FeasVi_uSPLQP': FeasVi_u,
+        'FeasVi_vSPLQP': FeasVi_v,
+        'TimeSPLQP': time_SPLQPRNN,
+        "res_value": res_value,
+        "res_norm": res_norm
+    })
+    
+    df.to_csv(filename, index=False)
+    print(f"成功保存 {n} 行数据到 {filename}")
+
+    return results
