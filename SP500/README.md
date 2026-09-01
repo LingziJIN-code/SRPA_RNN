@@ -44,7 +44,7 @@ pip install numpy pandas scipy matplotlib tensorflow keras cvxpy
 
 ```python
 # Train with SRPA (SPLQP)
-from SRPA.SPLQP import SPLQP_ReLU_optimization
+from SPLQP import SPLQP_ReLU_optimization
 
 results = SPLQP_ReLU_optimization(
     dataset_name="clean_SP500",
