@@ -16,7 +16,7 @@ random.seed(123456)
 results = SPLQP_ReLU_optimization(dataset_name=dataset_name,
                                     Ny=Ny,
                                     Nh=Nh,
-                                    maxiter=100,  
+                                    maxiter=1000,  
                                     distribution_type="Glorot",
                                     mean=0,
                                     std=20,

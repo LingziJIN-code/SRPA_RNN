@@ -1,4 +1,4 @@
-# SRPA: Sequential Quadratic Programming for Training RNNs
+# SRPA: Sequential Quadratic Programming for Training RNNs on the synthetic dataset
 
 ## Overview
 
@@ -17,6 +17,8 @@ syn/
 │   ├── SPLQP.py             # SRPA(SPLQP) algorithm
 │   ├── gen_synthetic_dataset.py  # generating synthetic dataset
 │   └── synT10_SPLQP_tuning.py   # tune the parameters of SRPA(SPLQP) on the synthetic dataset
+│   ├── dependency_packages.py     # Package installation and imports
+│   └── mypackages/                # Helper functions
 ├── Compare_SRPA_GDs_SGDs/   # Comparison experiments
 │   ├── synT10_GDs_SGDs.py
 │   └── synT10_auto_tuning_2_repeat.py
