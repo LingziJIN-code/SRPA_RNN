@@ -114,6 +114,7 @@ python plot_splqp_feasibilitymax_res_2.py
 
 > **A sequential regularized piecewise affine algorithm for nonconvex nonsmooth multicomposite optimization in RNN training**  
 > Lingzi Jin, Xiao Wang, Xiaojun Chen
+> arXiv:2609.18325
 
 ## Detailed Documentation
 
